@@ -1,0 +1,173 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+#include <algorithm>
+
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+};
+
+struct Enemy {
+    Vector3 viTri;
+    float khoangCach;
+    float gocYaw;
+    float gocPitch;
+    bool conSong;
+};
+
+class AimlockFreeFire {
+private:
+    Vector3 viTriNguoiChoi;
+    Vector3 gocHienTai;
+    std::vector<Enemy> danhSachDich;
+    float fov = 120.0f;
+    bool aimlockActive = false;
+    Vector3 gocMucTieu;
+    
+    float TinhKhoangCach(Vector3 a, Vector3 b) {
+        return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2) + pow(a.z - b.z, 2));
+    }
+    
+    Vector3 TinhGocNham(Vector3 viTriNguoiChoi, Vector3 viTriMucTieu) {
+        Vector3 delta;
+        delta.x = viTriMucTieu.x - viTriNguoiChoi.x;
+        delta.y = viTriMucTieu.y - viTriNguoiChoi.y;
+        delta.z = viTriMucTieu.z - viTriNguoiChoi.z;
+        
+        float khoangCach = sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+        
+        Vector3 goc;
+        goc.x = -asin(delta.y / khoangCach) * (180.0f / 3.14159265f);
+        goc.y = atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+        goc.z = 0;
+        
+        return goc;
+    }
+    
+    bool KiemTraTrongFov(Vector3 gocHienTai, Vector3 gocMucTieu) {
+        float chenhLechYaw = fabs(gocHienTai.y - gocMucTieu.y);
+        float chenhLechPitch = fabs(gocHienTai.x - gocMucTieu.x);
+        
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        return tongChenhLech <= fov;
+    }
+    
+public:
+    AimlockFreeFire() {
+        viTriNguoiChoi = Vector3(0, 0, 0);
+        gocHienTai = Vector3(0, 0, 0);
+        aimlockActive = false;
+        fov = 120.0f;
+    }
+    
+    void CapNhatViTriNguoiChoi(Vector3 viTriMoi) {
+        viTriNguoiChoi = viTriMoi;
+    }
+    
+    void CapNhatGocHienTai(Vector3 gocMoi) {
+        gocHienTai = gocMoi;
+    }
+    
+    void CapNhatDanhSachDich(std::vector<Vector3> danhSachViTriDich) {
+        danhSachDich.clear();
+        for (auto& viTri : danhSachViTriDich) {
+            Enemy dich;
+            dich.viTri = viTri;
+            dich.khoangCach = TinhKhoangCach(viTriNguoiChoi, viTri);
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, viTri);
+            dich.gocYaw = goc.y;
+            dich.gocPitch = goc.x;
+            dich.conSong = true;
+            danhSachDich.push_back(dich);
+        }
+    }
+    
+    Vector3 XulyAimlock() {
+        if (danhSachDich.empty()) {
+            aimlockActive = false;
+            return gocHienTai;
+        }
+        
+        Enemy dichGanNhatTrongFov;
+        bool timThayDich = false;
+        float khoangCachNhoNhat = 999999.0f;
+        
+        for (auto& dich : danhSachDich) {
+            if (!dich.conSong) continue;
+            
+            Vector3 gocCanNham = TinhGocNham(viTriNguoiChoi, dich.viTri);
+            
+            if (KiemTraTrongFov(gocHienTai, gocCanNham)) {
+                if (dich.khoangCach < khoangCachNhoNhat) {
+                    khoangCachNhoNhat = dich.khoangCach;
+                    dichGanNhatTrongFov = dich;
+                    gocMucTieu = gocCanNham;
+                    timThayDich = true;
+                }
+            }
+        }
+        
+        if (timThayDich) {
+            aimlockActive = true;
+            Vector3 gocMoi;
+            float doNhay = 0.35f;
+            gocMoi.x = gocHienTai.x + (gocMucTieu.x - gocHienTai.x) * doNhay;
+            gocMoi.y = gocHienTai.y + (gocMucTieu.y - gocHienTai.y) * doNhay;
+            gocMoi.z = 0;
+            return gocMoi;
+        } else {
+            aimlockActive = false;
+            return gocHienTai;
+        }
+    }
+    
+    bool IsAimlockActive() {
+        return aimlockActive;
+    }
+    
+    void SetFov(float fovMoi) {
+        fov = fovMoi;
+    }
+};
+
+AimlockFreeFlash aimlock;
+
+extern "C" {
+    void Hook_UpdateCamera() {
+        void* camera = (void*)0x7F8A4C00;
+        void* playerManager = (void*)0x7F8A4D00;
+        
+        Vector3 viTriNguoiChoi = Vector3(0, 0, 0);
+        Vector3 gocHienTai = Vector3(0, 0, 0);
+        std::vector<Vector3> danhSachDich;
+        
+        aimlock.CapNhatViTriNguoiChoi(viTriNguoiChoi);
+        aimlock.CapNhatGocHienTai(gocHienTai);
+        aimlock.CapNhatDanhSachDich(danhSachDich);
+        aimlock.SetFov(120.0f);
+        
+        Vector3 gocMoi = aimlock.XulyAimlock();
+        
+        if (aimlock.IsAimlockActive()) {
+            float* gocCamera = (float*)0x7F8A4C08;
+            gocCamera[0] = gocMoi.x;
+            gocCamera[1] = gocMoi.y;
+        }
+    }
+}
+
+int main() {
+    std::cout << "[START] Aimlock FOV 120 - CHI GIM KHI THAY DICH" << std::endl;
+    
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    
+    return 0;
+}
