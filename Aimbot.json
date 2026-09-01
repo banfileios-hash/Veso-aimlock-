@@ -1,0 +1,113 @@
+{
+    "mod_name": "Aimlock Head + Dagger",
+    "version": "2.1.0",
+    "author": "palofsc",
+    "description": "Aimlock head and dagger configuration for Free Fire",
+    
+    "aimlock_config": {
+        "enable": true,
+        "fov": 120.0,
+        "smoothness": 0.35,
+        "smoothness_when_swipe": 0.55,
+        "aim_mode": "head",
+        "priority": {
+            "nearest": 1.0,
+            "in_fov": 0.9,
+            "moving": 0.7,
+            "standing": 0.5
+        },
+        "target": {
+            "head": {
+                "enable": true,
+                "offset": 0.0,
+                "accuracy": 1.0,
+                "priority": 1.0
+            },
+            "chest": {
+                "enable": false,
+                "offset": 0.0,
+                "accuracy": 0.8,
+                "priority": 0.5
+            },
+            "leg": {
+                "enable": false,
+                "offset": 0.0,
+                "accuracy": 0.6,
+                "priority": 0.3
+            }
+        },
+        "aim_conditions": {
+            "min_distance": 5.0,
+            "max_distance": 300.0,
+            "min_lock_time": 0.5,
+            "target_switch_time": 0.3
+        },
+        "no_target_behavior": {
+            "keep_current_angle": true,
+            "wait_time": 0.5
+        }
+    },
+    
+    "dagger_config": {
+        "enable": true,
+        "mode": "auto",
+        "use_distance": 20.0,
+        "accuracy": 1.0,
+        "attack_speed": 1.5,
+        "priority": {
+            "moving": 0.8,
+            "standing": 0.6,
+            "low_hp": 1.0
+        }
+    },
+    
+    "bullet_config": {
+        "accuracy": 1.0,
+        "spread": 0.0,
+        "error": 0.0,
+        "deviation": 0.0,
+        "bullet_speed": 1.5,
+        "max_distance": 500.0
+    },
+    
+    "memory_address": {
+        "camera_angle": "0x7F8A4C08",
+        "player_position": "0x7F8A4C00",
+        "enemy_list": "0x7F8A4D00",
+        "target_angle": "0x7F8A4C10",
+        "smoothness": "0x7F8A4C14",
+        "aimlock_status": "0x7F8A4C18",
+        "current_target": "0x7F8A4C1C",
+        "current_fov": "0x7F8A4C20"
+    },
+    
+    "hotkey_config": {
+        "aim_lock": "BUTTON_RIGHT",
+        "switch_target": "KEY_TAB",
+        "toggle_aimlock": "KEY_F1",
+        "switch_aim_mode": "KEY_F2",
+        "dagger_auto": "KEY_F3"
+    },
+    
+    "optimize_config": {
+        "reduce_graphics": true,
+        "increase_fps": true,
+        "reduce_shake": true,
+        "smoothness_level": 1.0,
+        "reduce_lag": true
+    },
+    
+    "warning": {
+        "description": "This configuration file is for educational and research purposes only",
+        "risk": "May result in account ban if used in official game servers",
+        "recommendation": "Only use in training ground or private servers"
+    },
+    
+    "log_config": {
+        "enable_log": true,
+        "log_path": "/sdcard/aimlock_log.txt",
+        "log_target": true,
+        "log_position": true,
+        "log_time": true
+    }
+}
