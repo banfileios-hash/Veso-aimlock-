@@ -1,0 +1,333 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+#include <algorithm>
+#include <mutex>
+
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+    
+    Vector3 operator+(const Vector3& other) const {
+        return Vector3(x + other.x, y + other.y, z + other.z);
+    }
+    
+    Vector3 operator-(const Vector3& other) const {
+        return Vector3(x - other.x, y - other.y, z - other.z);
+    }
+    
+    Vector3 operator*(float scalar) const {
+        return Vector3(x * scalar, y * scalar, z * scalar);
+    }
+};
+
+struct Enemy {
+    Vector3 viTri;
+    Vector3 viTriDuDoan;
+    float khoangCach;
+    float gocYaw;
+    float gocPitch;
+    bool conSong;
+    float tocDoDiChuyen;
+    Vector3 huongDiChuyen;
+    float thoiGianTonTai;
+    Vector3 viTriTruoc;
+    float doChinhXac;
+};
+
+class AimlockSuper {
+private:
+    Vector3 viTriNguoiChoi;
+    Vector3 gocHienTai;
+    std::vector<Enemy> danhSachDich;
+    float fov = 120.0f;
+    bool aimlockActive = false;
+    Vector3 gocMucTieu;
+    Enemy dichMucTieuHienTai;
+    float doNhayCoBan = 0.35f;
+    float doNhayKhiVuot = 0.55f;
+    float doNhayBanXa = 0.15f;
+    bool dangVuot = false;
+    float tocDoVuot = 0.0f;
+    Vector3 huongVuot;
+    std::mutex mutexAimlock;
+    float thoiGianChay = 0.0f;
+    Vector3 gocTruoc = Vector3(0, 0, 0);
+    bool daKhoiTao = false;
+    float doNhayDong = 0.0f;
+    
+    float TinhKhoangCach(Vector3 a, Vector3 b) {
+        return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2) + pow(a.z - b.z, 2));
+    }
+    
+    Vector3 TinhGocNham(Vector3 viTriNguoiChoi, Vector3 viTriMucTieu) {
+        Vector3 delta = viTriMucTieu - viTriNguoiChoi;
+        float khoangCach = TinhKhoangCach(viTriNguoiChoi, viTriMucTieu);
+        if (khoangCach < 0.001f) return Vector3(0, 0, 0);
+        
+        Vector3 goc;
+        goc.x = -asin(delta.y / khoangCach) * (180.0f / 3.14159265f);
+        goc.y = atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+        goc.z = 0;
+        return goc;
+    }
+    
+    bool KiemTraTrongFov(Vector3 gocHienTai, Vector3 gocMucTieu) {
+        float chenhLechYaw = fabs(gocHienTai.y - gocMucTieu.y);
+        float chenhLechPitch = fabs(gocHienTai.x - gocMucTieu.x);
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        return tongChenhLech <= fov;
+    }
+    
+    Vector3 DuDoanViTri(Enemy dich, float deltaThoiGian) {
+        if (dich.tocDoDiChuyen < 0.1f) return dich.viTri;
+        Vector3 viTriDuDoan = dich.viTri + (dich.huongDiChuyen * dich.tocDoDiChuyen * deltaThoiGian);
+        return viTriDuDoan;
+    }
+    
+    float TinhDoUuTien(Enemy dich) {
+        float diemUuTien = 0.0f;
+        diemUuTien += 1000.0f / (dich.khoangCach + 1.0f);
+        Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+        float chenhLechYaw = fabs(gocHienTai.y - goc.y);
+        float chenhLechPitch = fabs(gocHienTai.x - goc.x);
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        diemUuTien += 500.0f / (tongChenhLech + 1.0f);
+        diemUuTien += dich.tocDoDiChuyen * 20.0f;
+        diemUuTien += dich.doChinhXac * 100.0f;
+        if (dich.khoangCach < 30.0f) diemUuTien += 300.0f;
+        else if (dich.khoangCach < 80.0f) diemUuTien += 150.0f;
+        return diemUuTien;
+    }
+    
+    Enemy ChonMucTieu() {
+        Enemy mucTieuTotNhat;
+        float diemCaoNhat = -999999.0f;
+        bool timThay = false;
+        
+        for (auto& dich : danhSachDich) {
+            if (!dich.conSong) continue;
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+            if (!KiemTraTrongFov(gocHienTai, goc)) continue;
+            float diem = TinhDoUuTien(dich);
+            if (diem > diemCaoNhat) {
+                diemCaoNhat = diem;
+                mucTieuTotNhat = dich;
+                gocMucTieu = goc;
+                timThay = true;
+            }
+        }
+        
+        if (timThay) return mucTieuTotNhat;
+        Enemy rong;
+        rong.conSong = false;
+        return rong;
+    }
+    
+    void PhatHienVuot() {
+        if (!daKhoiTao) {
+            gocTruoc = gocHienTai;
+            daKhoiTao = true;
+            return;
+        }
+        
+        float deltaGocYaw = fabs(gocHienTai.y - gocTruoc.y);
+        float deltaGocPitch = fabs(gocHienTai.x - gocTruoc.x);
+        
+        if (deltaGocYaw > 15.0f || deltaGocPitch > 10.0f) {
+            dangVuot = true;
+            tocDoVuot = (deltaGocYaw + deltaGocPitch) / 2.0f;
+            huongVuot = Vector3(
+                gocHienTai.x - gocTruoc.x,
+                gocHienTai.y - gocTruoc.y,
+                0
+            );
+        } else {
+            dangVuot = false;
+            tocDoVuot = 0.0f;
+        }
+        gocTruoc = gocHienTai;
+    }
+    
+    float TinhDoNhayDong(Enemy dich) {
+        float doNhay = doNhayCoBan;
+        float khoangCach = dich.khoangCach;
+        float tocDo = dich.tocDoDiChuyen;
+        
+        if (khoangCach < 30.0f) {
+            doNhay = 0.50f + (1.0f - khoangCach / 30.0f) * 0.30f;
+        } else if (khoangCach < 80.0f) {
+            doNhay = 0.35f + (1.0f - (khoangCach - 30.0f) / 50.0f) * 0.15f;
+        } else if (khoangCach < 150.0f) {
+            doNhay = 0.25f + (1.0f - (khoangCach - 80.0f) / 70.0f) * 0.10f;
+        } else {
+            doNhay = 0.15f + (1.0f / (khoangCach - 149.0f)) * 0.05f;
+        }
+        
+        if (dangVuot) {
+            doNhay += tocDoVuot / 100.0f * 0.30f;
+            if (doNhay > 0.85f) doNhay = 0.85f;
+        }
+        
+        if (tocDo > 5.0f) {
+            doNhay += tocDo / 100.0f * 0.15f;
+        }
+        
+        if (doNhay < 0.05f) doNhay = 0.05f;
+        if (doNhay > 0.95f) doNhay = 0.95f;
+        
+        return doNhay;
+    }
+    
+public:
+    AimlockSuper() {
+        viTriNguoiChoi = Vector3(0, 0, 0);
+        gocHienTai = Vector3(0, 0, 0);
+        aimlockActive = false;
+        fov = 120.0f;
+        dangVuot = false;
+        daKhoiTao = false;
+    }
+    
+    void CapNhatViTriNguoiChoi(Vector3 viTriMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        viTriNguoiChoi = viTriMoi;
+    }
+    
+    void CapNhatGocHienTai(Vector3 gocMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        gocHienTai = gocMoi;
+    }
+    
+    void CapNhatDanhSachDich(std::vector<Vector3> danhSachViTri, 
+                             std::vector<float> danhSachTocDo,
+                             std::vector<Vector3> danhSachHuong) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        danhSachDich.clear();
+        for (size_t i = 0; i < danhSachViTri.size(); i++) {
+            Enemy dich;
+            dich.viTri = danhSachViTri[i];
+            dich.khoangCach = TinhKhoangCach(viTriNguoiChoi, dich.viTri);
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+            dich.gocYaw = goc.y;
+            dich.gocPitch = goc.x;
+            dich.conSong = true;
+            dich.tocDoDiChuyen = (i < danhSachTocDo.size()) ? danhSachTocDo[i] : 0.0f;
+            dich.huongDiChuyen = (i < danhSachHuong.size()) ? danhSachHuong[i] : Vector3(0, 0, 0);
+            dich.viTriTruoc = dich.viTri;
+            dich.doChinhXac = 0.8f + (rand() % 20) / 100.0f;
+            danhSachDich.push_back(dich);
+        }
+    }
+    
+    Vector3 XulyAimlock() {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        thoiGianChay += 0.016f;
+        PhatHienVuot();
+        
+        Enemy mucTieu = ChonMucTieu();
+        
+        if (mucTieu.conSong) {
+            aimlockActive = true;
+            dichMucTieuHienTai = mucTieu;
+            
+            Vector3 viTriDuDoan = DuDoanViTri(mucTieu, 0.1f);
+            Vector3 gocDuDoan = TinhGocNham(viTriNguoiChoi, viTriDuDoan);
+            
+            float heSoNhay = TinhDoNhayDong(mucTieu);
+            doNhayDong = heSoNhay;
+            
+            Vector3 gocMoi;
+            float buocX = (gocDuDoan.x - gocHienTai.x) * heSoNhay;
+            float buocY = (gocDuDoan.y - gocHienTai.y) * heSoNhay;
+            
+            if (dangVuot) {
+                buocX += huongVuot.x * 0.12f;
+                buocY += huongVuot.y * 0.12f;
+            }
+            
+            float tocDoHieuChinh = 1.0f + (mucTieu.tocDoDiChuyen / 50.0f);
+            buocX *= tocDoHieuChinh;
+            buocY *= tocDoHieuChinh;
+            
+            if (mucTieu.khoangCach < 30.0f) {
+                buocX *= 1.2f;
+                buocY *= 1.2f;
+            }
+            
+            gocMoi.x = gocHienTai.x + buocX;
+            gocMoi.y = gocHienTai.y + buocY;
+            gocMoi.z = 0;
+            
+            return gocMoi;
+        } else {
+            aimlockActive = false;
+            return gocHienTai;
+        }
+    }
+    
+    bool IsAimlockActive() {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        return aimlockActive;
+    }
+    
+    void SetFov(float fovMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        fov = fovMoi;
+    }
+    
+    void SetDoNhay(float doNhayMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        doNhayCoBan = doNhayMoi;
+    }
+};
+
+AimlockSuper aimlock;
+
+extern "C" {
+    void Hook_UpdateCamera() {
+        void* camera = (void*)0x7F8A4C00;
+        void* playerManager = (void*)0x7F8A4D00;
+        
+        Vector3 viTriNguoiChoi = Vector3(0, 0, 0);
+        Vector3 gocHienTai = Vector3(0, 0, 0);
+        std::vector<Vector3> danhSachDich;
+        std::vector<float> danhSachTocDo;
+        std::vector<Vector3> danhSachHuong;
+        
+        aimlock.CapNhatViTriNguoiChoi(viTriNguoiChoi);
+        aimlock.CapNhatGocHienTai(gocHienTai);
+        aimlock.CapNhatDanhSachDich(danhSachDich, danhSachTocDo, danhSachHuong);
+        aimlock.SetFov(120.0f);
+        aimlock.SetDoNhay(0.35f);
+        
+        Vector3 gocMoi = aimlock.XulyAimlock();
+        
+        if (aimlock.IsAimlockActive()) {
+            float* gocCamera = (float*)0x7F8A4C08;
+            float* doNhayMemory = (float*)0x7F8A4C10;
+            
+            gocCamera[0] = gocMoi.x;
+            gocCamera[1] = gocMoi.y;
+            doNhayMemory[0] = 0.95f;
+        }
+    }
+}
+
+int main() {
+    std::cout << "[START] AIMLOCK SUPER - BAM CHAT & BAN MUOT" << std::endl;
+    std::cout << "[INFO] Tu dong du doan vi tri dich" << std::endl;
+    std::cout << "[INFO] Dieu chinh do nhay theo khoang cach" << std::endl;
+    std::cout << "[INFO] Hieu ung ban muot toi uu" << std::endl;
+    
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    
+    return 0;
+}
