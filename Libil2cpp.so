@@ -1,0 +1,110 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+};
+
+Vector3 TinhGocNham(Vector3 viTriNguoiChoi, Vector3 viTriMucTieu) {
+    Vector3 delta;
+    delta.x = viTriMucTieu.x - viTriNguoiChoi.x;
+    delta.y = viTriMucTieu.y - viTriNguoiChoi.y;
+    delta.z = viTriMucTieu.z - viTriNguoiChoi.z;
+    
+    float khoangCach = sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+    
+    Vector3 goc;
+    goc.x = -asin(delta.y / khoangCach) * (180.0f / 3.14159265f);
+    goc.y = atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+    goc.z = 0;
+    
+    return goc;
+}
+
+class BoNhoGiaLap {
+private:
+    Vector3 viTriNguoiChoi;
+    Vector3 viTriMucTieu;
+    Vector3 gocHienTai;
+    
+public:
+    BoNhoGiaLap() {
+        viTriNguoiChoi = Vector3(0, 0, 0);
+        viTriMucTieu = Vector3(10, 0, 5);
+        gocHienTai = Vector3(0, 0, 0);
+    }
+    
+    Vector3 DocViTriNguoiChoi() {
+        return viTriNguoiChoi;
+    }
+    
+    Vector3 DocViTriMucTieu() {
+        return viTriMucTieu;
+    }
+    
+    Vector3 DocGocHienTai() {
+        return gocHienTai;
+    }
+    
+    void GhiGocNham(Vector3 gocMoi) {
+        gocHienTai = gocMoi;
+        std::cout << "[GHI] Goc Pitch: " << gocMoi.x << " | Yaw: " << gocMoi.y << std::endl;
+    }
+    
+    void CapNhatMucTieuMoi(Vector3 viTriMoi) {
+        viTriMucTieu = viTriMoi;
+    }
+};
+
+void AimlockLoop(BoNhoGiaLap& boNho, float doNhay) {
+    while (true) {
+        Vector3 viTriNguoiChoi = boNho.DocViTriNguoiChoi();
+        Vector3 viTriMucTieu = boNho.DocViTriMucTieu();
+        Vector3 gocHienTai = boNho.DocGocHienTai();
+        
+        Vector3 gocCanNham = TinhGocNham(viTriNguoiChoi, viTriMucTieu);
+        
+        Vector3 gocMoi;
+        gocMoi.x = gocHienTai.x + (gocCanNham.x - gocHienTai.x) * doNhay;
+        gocMoi.y = gocHienTai.y + (gocCanNham.y - gocHienTai.y) * doNhay;
+        gocMoi.z = 0;
+        
+        boNho.GhiGocNham(gocMoi);
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+extern "C" {
+    void Hook_Aimlock() {
+        void* camera = (void*)0x7F8A4C00;
+        void* playerManager = (void*)0x7F8A4D00;
+    }
+}
+
+int main() {
+    std::cout << "[START] Aimlock No Root - CHEAT ENGINE DEMO" << std::endl;
+    std::cout << "[WARNING] Chi hoat dong cho ung dung cua ban" << std::endl;
+    std::cout << "[WARNING] De hack Free Fire can build lai APK" << std::endl;
+    
+    BoNhoGiaLap boNho;
+    
+    std::thread capNhatMucTieu([&boNho]() {
+        float t = 0;
+        while (true) {
+            t += 0.1f;
+            Vector3 viTriMoi(10 * cos(t), 0, 5 * sin(t));
+            boNho.CapNhatMucTieuMoi(viTriMoi);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    });
+    
+    AimlockLoop(boNho, 0.3f);
+    
+    return 0;
+}
