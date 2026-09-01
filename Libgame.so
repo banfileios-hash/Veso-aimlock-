@@ -1,0 +1,265 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+#include <algorithm>
+
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+};
+
+struct Enemy {
+    Vector3 viTri;
+    float khoangCach;
+    float gocYaw;
+    float gocPitch;
+    bool conSong;
+    float tocDoDiChuyen;
+    Vector3 huongDiChuyen;
+};
+
+class AimlockFreeFire {
+private:
+    Vector3 viTriNguoiChoi;
+    Vector3 gocHienTai;
+    std::vector<Enemy> danhSachDich;
+    float fov = 120.0f;
+    bool aimlockActive = false;
+    Vector3 gocMucTieu;
+    Enemy dichMucTieuHienTai;
+    float doNhay = 0.25f;
+    float doNhayKhiVuot = 0.45f;
+    bool dangVuot = false;
+    float tocDoVuot = 0.0f;
+    Vector3 huongVuot;
+    
+    float TinhKhoangCach(Vector3 a, Vector3 b) {
+        return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2) + pow(a.z - b.z, 2));
+    }
+    
+    Vector3 TinhGocNham(Vector3 viTriNguoiChoi, Vector3 viTriMucTieu) {
+        Vector3 delta;
+        delta.x = viTriMucTieu.x - viTriNguoiChoi.x;
+        delta.y = viTriMucTieu.y - viTriNguoiChoi.y;
+        delta.z = viTriMucTieu.z - viTriNguoiChoi.z;
+        
+        float khoangCach = sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+        if (khoangCach < 0.001f) return Vector3(0, 0, 0);
+        
+        Vector3 goc;
+        goc.x = -asin(delta.y / khoangCach) * (180.0f / 3.14159265f);
+        goc.y = atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+        goc.z = 0;
+        
+        return goc;
+    }
+    
+    bool KiemTraTrongFov(Vector3 gocHienTai, Vector3 gocMucTieu) {
+        float chenhLechYaw = fabs(gocHienTai.y - gocMucTieu.y);
+        float chenhLechPitch = fabs(gocHienTai.x - gocMucTieu.x);
+        
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        return tongChenhLech <= fov;
+    }
+    
+    float TinhDoUuTien(Enemy dich) {
+        float diemUuTien = 0.0f;
+        diemUuTien += 1000.0f / (dich.khoangCach + 1.0f);
+        
+        Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+        float chenhLechYaw = fabs(gocHienTai.y - goc.y);
+        float chenhLechPitch = fabs(gocHienTai.x - goc.x);
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        diemUuTien += 500.0f / (tongChenhLech + 1.0f);
+        
+        diemUuTien += dich.tocDoDiChuyen * 10.0f;
+        
+        return diemUuTien;
+    }
+    
+    Enemy ChonMucTieu() {
+        Enemy mucTieuTotNhat;
+        float diemCaoNhat = -999999.0f;
+        bool timThay = false;
+        
+        for (auto& dich : danhSachDich) {
+            if (!dich.conSong) continue;
+            
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+            if (!KiemTraTrongFov(gocHienTai, goc)) continue;
+            
+            float diem = TinhDoUuTien(dich);
+            if (diem > diemCaoNhat) {
+                diemCaoNhat = diem;
+                mucTieuTotNhat = dich;
+                gocMucTieu = goc;
+                timThay = true;
+            }
+        }
+        
+        if (timThay) return mucTieuTotNhat;
+        
+        Enemy rong;
+        rong.conSong = false;
+        return rong;
+    }
+    
+    void PhatHienVuot() {
+        static Vector3 gocTruoc = gocHienTai;
+        float deltaGocYaw = fabs(gocHienTai.y - gocTruoc.y);
+        float deltaGocPitch = fabs(gocHienTai.x - gocTruoc.x);
+        
+        if (deltaGocYaw > 30.0f || deltaGocPitch > 20.0f) {
+            dangVuot = true;
+            tocDoVuot = (deltaGocYaw + deltaGocPitch) / 2.0f;
+            huongVuot = Vector3(
+                gocHienTai.x - gocTruoc.x,
+                gocHienTai.y - gocTruoc.y,
+                0
+            );
+        } else {
+            dangVuot = false;
+            tocDoVuot = 0.0f;
+        }
+        
+        gocTruoc = gocHienTai;
+    }
+    
+public:
+    AimlockFreeFire() {
+        viTriNguoiChoi = Vector3(0, 0, 0);
+        gocHienTai = Vector3(0, 0, 0);
+        aimlockActive = false;
+        fov = 120.0f;
+        doNhay = 0.25f;
+        doNhayKhiVuot = 0.45f;
+        dangVuot = false;
+    }
+    
+    void CapNhatViTriNguoiChoi(Vector3 viTriMoi) {
+        viTriNguoiChoi = viTriMoi;
+    }
+    
+    void CapNhatGocHienTai(Vector3 gocMoi) {
+        gocHienTai = gocMoi;
+    }
+    
+    void CapNhatDanhSachDich(std::vector<Vector3> danhSachViTriDich, std::vector<float> danhSachTocDo) {
+        danhSachDich.clear();
+        for (size_t i = 0; i < danhSachViTriDich.size(); i++) {
+            Enemy dich;
+            dich.viTri = danhSachViTriDich[i];
+            dich.khoangCach = TinhKhoangCach(viTriNguoiChoi, dich.viTri);
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, dich.viTri);
+            dich.gocYaw = goc.y;
+            dich.gocPitch = goc.x;
+            dich.conSong = true;
+            if (i < danhSachTocDo.size()) {
+                dich.tocDoDiChuyen = danhSachTocDo[i];
+            } else {
+                dich.tocDoDiChuyen = 0.0f;
+            }
+            danhSachDich.push_back(dich);
+        }
+    }
+    
+    Vector3 XulyAimlock() {
+        PhatHienVuot();
+        
+        Enemy mucTieu = ChonMucTieu();
+        
+        if (mucTieu.conSong) {
+            aimlockActive = true;
+            dichMucTieuHienTai = mucTieu;
+            
+            Vector3 gocMoi;
+            float heSoNhayHienTai = doNhay;
+            
+            if (dangVuot) {
+                heSoNhayHienTai = doNhayKhiVuot + (tocDoVuot / 100.0f) * 0.3f;
+                if (heSoNhayHienTai > 0.85f) heSoNhayHienTai = 0.85f;
+            }
+            
+            if (mucTieu.khoangCach < 50.0f) {
+                heSoNhayHienTai += 0.1f;
+            } else if (mucTieu.khoangCach > 150.0f) {
+                heSoNhayHienTai -= 0.05f;
+                if (heSoNhayHienTai < 0.1f) heSoNhayHienTai = 0.1f;
+            }
+            
+            float buocX = (gocMucTieu.x - gocHienTai.x) * heSoNhayHienTai;
+            float buocY = (gocMucTieu.y - gocHienTai.y) * heSoNhayHienTai;
+            
+            if (dangVuot) {
+                buocX += huongVuot.x * 0.15f;
+                buocY += huongVuot.y * 0.15f;
+            }
+            
+            gocMoi.x = gocHienTai.x + buocX;
+            gocMoi.y = gocHienTai.y + buocY;
+            gocMoi.z = 0;
+            
+            return gocMoi;
+        } else {
+            aimlockActive = false;
+            return gocHienTai;
+        }
+    }
+    
+    bool IsAimlockActive() {
+        return aimlockActive;
+    }
+    
+    void SetFov(float fovMoi) {
+        fov = fovMoi;
+    }
+    
+    void SetDoNhay(float doNhayMoi) {
+        doNhay = doNhayMoi;
+    }
+};
+
+AimlockFreeFire aimlock;
+
+extern "C" {
+    void Hook_UpdateCamera() {
+        void* camera = (void*)0x7F8A4C00;
+        void* playerManager = (void*)0x7F8A4D00;
+        
+        Vector3 viTriNguoiChoi = Vector3(0, 0, 0);
+        Vector3 gocHienTai = Vector3(0, 0, 0);
+        std::vector<Vector3> danhSachDich;
+        std::vector<float> danhSachTocDo;
+        
+        aimlock.CapNhatViTriNguoiChoi(viTriNguoiChoi);
+        aimlock.CapNhatGocHienTai(gocHienTai);
+        aimlock.CapNhatDanhSachDich(danhSachDich, danhSachTocDo);
+        aimlock.SetFov(120.0f);
+        aimlock.SetDoNhay(0.25f);
+        
+        Vector3 gocMoi = aimlock.XulyAimlock();
+        
+        if (aimlock.IsAimlockActive()) {
+            float* gocCamera = (float*)0x7F8A4C08;
+            gocCamera[0] = gocMoi.x;
+            gocCamera[1] = gocMoi.y;
+        }
+    }
+}
+
+int main() {
+    std::cout << "[START] Aimlock FOV 120 - Khoa dau dich gan va xa" << std::endl;
+    std::cout << "[INFO] Tu dong chuyen muc tieu khi vuot man hinh" << std::endl;
+    
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    
+    return 0;
+}
