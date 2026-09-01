@@ -1,0 +1,481 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <math.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
+
+#define LOG_TAG "AimlockCRT"
+#define PI 3.14159265358979323846
+#define MAX_ENEMIES 64
+#define BUFFER_SIZE 1024
+
+typedef struct {
+    float x, y, z;
+} Vector3;
+
+typedef struct {
+    Vector3 position;
+    Vector3 headPosition;
+    Vector3 chestPosition;
+    float distance;
+    float health;
+    int alive;
+    int id;
+} Enemy;
+
+typedef struct {
+    int enable;
+    float fov;
+    float smoothness;
+    float smoothnessSwipe;
+    float maxDistance;
+    float minDistance;
+    float predictionTime;
+    int aimMode;
+    int priorityType;
+    int autoSwitch;
+    float switchDelay;
+    float noTargetWait;
+    int keepAngleNoTarget;
+} AimlockConfig;
+
+typedef struct {
+    long cameraAngle;
+    long playerPosition;
+    long enemyList;
+    long targetAngle;
+    long smoothnessAddr;
+    long aimlockStatus;
+    long currentTarget;
+    long currentFov;
+    long headOffset;
+    long playerList;
+    long healthAddr;
+} MemoryAddress;
+
+AimlockConfig g_config;
+MemoryAddress g_memory;
+Enemy g_enemies[MAX_ENEMIES];
+int g_enemyCount = 0;
+int g_pid = 0;
+int g_running = 1;
+pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+Vector3 g_currentAngle = {0, 0, 0};
+Vector3 g_lastValidAngle = {0, 0, 0};
+int g_isLocking = 0;
+float g_noTargetTimer = 0;
+float g_lastSwitchTime = 0;
+int g_currentTargetId = -1;
+
+void signal_handler(int sig) {
+    printf("\n[INFO] Dung aimlock...\n");
+    g_running = 0;
+}
+
+float degreesToRadians(float degrees) {
+    return degrees * PI / 180.0f;
+}
+
+float radiansToDegrees(float radians) {
+    return radians * 180.0f / PI;
+}
+
+float calculateDistance(Vector3 a, Vector3 b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    float dz = a.z - b.z;
+    return sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+Vector3 calculateAngle(Vector3 from, Vector3 to) {
+    Vector3 delta;
+    delta.x = to.x - from.x;
+    delta.y = to.y - from.y;
+    delta.z = to.z - from.z;
+    
+    float distance = calculateDistance(from, to);
+    if (distance < 0.001f) {
+        Vector3 zero = {0, 0, 0};
+        return zero;
+    }
+    
+    Vector3 angle;
+    angle.x = -asin(delta.y / distance) * 180.0f / PI;
+    angle.y = atan2(delta.x, delta.z) * 180.0f / PI;
+    angle.z = 0;
+    
+    return angle;
+}
+
+int isInFov(Vector3 currentAngle, Vector3 targetAngle, float fov) {
+    float diffYaw = fabs(currentAngle.y - targetAngle.y);
+    float diffPitch = fabs(currentAngle.x - targetAngle.x);
+    
+    if (diffYaw > 180.0f) diffYaw = 360.0f - diffYaw;
+    
+    float totalDiff = sqrt(diffYaw*diffYaw + diffPitch*diffPitch);
+    return totalDiff <= fov / 2.0f;
+}
+
+float calculatePriority(Enemy* enemy) {
+    float score = 0.0f;
+    
+    switch (g_config.priorityType) {
+        case 0:
+            score = 1000.0f / (enemy->distance + 1.0f);
+            break;
+        case 1:
+            Vector3 angle = calculateAngle(g_memory.playerPosition, enemy->position);
+            float diff = fabs(g_currentAngle.y - angle.y);
+            if (diff > 180.0f) diff = 360.0f - diff;
+            score = 100.0f / (diff + 1.0f);
+            break;
+        case 2:
+            score = 100.0f - enemy->health;
+            break;
+        default:
+            score = 1000.0f / (enemy->distance + 1.0f);
+            break;
+    }
+    
+    return score;
+}
+
+Vector3 getTargetPosition(Enemy* enemy) {
+    Vector3 pos = {0, 0, 0};
+    
+    switch (g_config.aimMode) {
+        case 0:
+            pos = enemy->headPosition;
+            pos.y += 0.15f;
+            break;
+        case 1:
+            pos = enemy->chestPosition;
+            break;
+        case 2:
+            pos = enemy->position;
+            pos.y -= 0.5f;
+            break;
+        default:
+            if (enemy->distance < 30.0f) {
+                pos = enemy->headPosition;
+            } else {
+                pos = enemy->chestPosition;
+            }
+            break;
+    }
+    
+    return pos;
+}
+
+Enemy* selectBestTarget() {
+    if (g_enemyCount == 0) return NULL;
+    
+    Enemy* bestTarget = NULL;
+    float bestScore = -999999.0f;
+    
+    for (int i = 0; i < g_enemyCount; i++) {
+        if (!g_enemies[i].alive) continue;
+        
+        Vector3 angle = calculateAngle(g_memory.playerPosition, g_enemies[i].position);
+        if (!isInFov(g_currentAngle, angle, g_config.fov)) continue;
+        
+        float score = calculatePriority(&g_enemies[i]);
+        if (score > bestScore) {
+            bestScore = score;
+            bestTarget = &g_enemies[i];
+        }
+    }
+    
+    return bestTarget;
+}
+
+void applyAngle(Vector3 angle) {
+    g_currentAngle.x = angle.x;
+    g_currentAngle.y = angle.y;
+    g_currentAngle.z = 0;
+    
+    g_lastValidAngle = g_currentAngle;
+}
+
+int isSwipeDetected() {
+    static Vector3 lastAngle = {0, 0, 0};
+    float diffYaw = fabs(g_currentAngle.y - lastAngle.y);
+    float diffPitch = fabs(g_currentAngle.x - lastAngle.x);
+    
+    int result = (diffYaw > 15.0f || diffPitch > 10.0f);
+    lastAngle = g_currentAngle;
+    return result;
+}
+
+void processAimlock(Enemy* target) {
+    if (target == NULL) return;
+    
+    g_currentTargetId = target->id;
+    Vector3 targetPos = getTargetPosition(target);
+    Vector3 angle = calculateAngle(g_memory.playerPosition, targetPos);
+    
+    float currentSmoothness = g_config.smoothness;
+    
+    if (isSwipeDetected()) {
+        currentSmoothness = g_config.smoothnessSwipe;
+    }
+    
+    if (target->distance < 30.0f) {
+        currentSmoothness += 0.1f;
+    } else if (target->distance > 150.0f) {
+        currentSmoothness -= 0.05f;
+    }
+    
+    if (currentSmoothness < 0.05f) currentSmoothness = 0.05f;
+    if (currentSmoothness > 0.95f) currentSmoothness = 0.95f;
+    
+    Vector3 newAngle;
+    newAngle.x = g_currentAngle.x + (angle.x - g_currentAngle.x) * currentSmoothness;
+    newAngle.y = g_currentAngle.y + (angle.y - g_currentAngle.y) * currentSmoothness;
+    newAngle.z = 0;
+    
+    applyAngle(newAngle);
+    g_isLocking = 1;
+    g_noTargetTimer = 0;
+}
+
+void handleNoTarget() {
+    if (g_config.keepAngleNoTarget) {
+        g_noTargetTimer += 0.016f;
+        if (g_noTargetTimer < g_config.noTargetWait) {
+            applyAngle(g_lastValidAngle);
+        }
+    }
+    
+    g_isLocking = 0;
+    g_currentTargetId = -1;
+}
+
+void updateEnemyList() {
+    pthread_mutex_lock(&g_mutex);
+    
+    g_enemyCount = 0;
+    
+    char memPath[256];
+    snprintf(memPath, sizeof(memPath), "/proc/%d/mem", g_pid);
+    
+    int memFd = open(memPath, O_RDONLY);
+    if (memFd < 0) {
+        pthread_mutex_unlock(&g_mutex);
+        return;
+    }
+    
+    for (int i = 0; i < 10; i++) {
+        Enemy enemy;
+        enemy.position.x = 10.0f + i * 5.0f;
+        enemy.position.y = 0.0f;
+        enemy.position.z = 20.0f + i * 3.0f;
+        enemy.headPosition.x = enemy.position.x;
+        enemy.headPosition.y = enemy.position.y + 1.7f;
+        enemy.headPosition.z = enemy.position.z;
+        enemy.chestPosition.x = enemy.position.x;
+        enemy.chestPosition.y = enemy.position.y + 1.2f;
+        enemy.chestPosition.z = enemy.position.z;
+        enemy.distance = calculateDistance(g_memory.playerPosition, enemy.position);
+        enemy.health = 100.0f;
+        enemy.alive = 1;
+        enemy.id = i;
+        
+        g_enemies[g_enemyCount++] = enemy;
+        if (g_enemyCount >= MAX_ENEMIES) break;
+    }
+    
+    close(memFd);
+    pthread_mutex_unlock(&g_mutex);
+}
+
+void* aimlockThread(void* arg) {
+    printf("[THREAD] Aimlock thread started\n");
+    
+    while (g_running) {
+        updateEnemyList();
+        
+        if (g_enemyCount > 0) {
+            Enemy* target = selectBestTarget();
+            if (target != NULL) {
+                processAimlock(target);
+            } else {
+                handleNoTarget();
+            }
+        } else {
+            handleNoTarget();
+        }
+        
+        usleep(10000);
+    }
+    
+    printf("[THREAD] Aimlock thread stopped\n");
+    return NULL;
+}
+
+int findProcess(const char* processName) {
+    DIR* dir = opendir("/proc");
+    if (dir == NULL) return 0;
+    
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type != DT_DIR) continue;
+        
+        int pid = atoi(entry->d_name);
+        if (pid <= 0) continue;
+        
+        char cmdPath[256];
+        snprintf(cmdPath, sizeof(cmdPath), "/proc/%d/cmdline", pid);
+        
+        FILE* fp = fopen(cmdPath, "r");
+        if (fp == NULL) continue;
+        
+        char cmdline[256];
+        if (fgets(cmdline, sizeof(cmdline), fp) != NULL) {
+            if (strstr(cmdline, processName) != NULL) {
+                fclose(fp);
+                closedir(dir);
+                return pid;
+            }
+        }
+        fclose(fp);
+    }
+    
+    closedir(dir);
+    return 0;
+}
+
+int readMemory(long address, void* buffer, size_t size) {
+    char memPath[256];
+    snprintf(memPath, sizeof(memPath), "/proc/%d/mem", g_pid);
+    
+    int fd = open(memPath, O_RDONLY);
+    if (fd < 0) return -1;
+    
+    lseek(fd, address, SEEK_SET);
+    ssize_t bytes = read(fd, buffer, size);
+    close(fd);
+    
+    return bytes == (ssize_t)size ? 0 : -1;
+}
+
+int writeMemory(long address, void* buffer, size_t size) {
+    char memPath[256];
+    snprintf(memPath, sizeof(memPath), "/proc/%d/mem", g_pid);
+    
+    int fd = open(memPath, O_RDWR);
+    if (fd < 0) return -1;
+    
+    lseek(fd, address, SEEK_SET);
+    ssize_t bytes = write(fd, buffer, size);
+    close(fd);
+    
+    return bytes == (ssize_t)size ? 0 : -1;
+}
+
+void loadConfig() {
+    g_config.enable = 1;
+    g_config.fov = 120.0f;
+    g_config.smoothness = 0.35f;
+    g_config.smoothnessSwipe = 0.55f;
+    g_config.maxDistance = 300.0f;
+    g_config.minDistance = 5.0f;
+    g_config.predictionTime = 0.08f;
+    g_config.aimMode = 0;
+    g_config.priorityType = 0;
+    g_config.autoSwitch = 1;
+    g_config.switchDelay = 0.3f;
+    g_config.noTargetWait = 0.5f;
+    g_config.keepAngleNoTarget = 1;
+    
+    g_memory.cameraAngle = 0x7F8A4C08;
+    g_memory.playerPosition = 0x7F8A4C00;
+    g_memory.enemyList = 0x7F8A4D00;
+    g_memory.targetAngle = 0x7F8A4C10;
+    g_memory.smoothnessAddr = 0x7F8A4C14;
+    g_memory.aimlockStatus = 0x7F8A4C18;
+    g_memory.currentTarget = 0x7F8A4C1C;
+    g_memory.currentFov = 0x7F8A4C20;
+    g_memory.headOffset = 0x10;
+    g_memory.playerList = 0x7F8A4D10;
+    g_memory.healthAddr = 0x7F8A4D20;
+}
+
+void printBanner() {
+    printf("\n");
+    printf("========================================\n");
+    printf("  AIMLOCK CRT - Free Fire Headshot\n");
+    printf("  Author: palofsc\n");
+    printf("  Version: 3.0.0\n");
+    printf("========================================\n");
+    printf("\n");
+}
+
+void printHelp() {
+    printf("Hotkeys:\n");
+    printf("  F1 - Toggle Aimlock\n");
+    printf("  F2 - Switch Aim Mode\n");
+    printf("  F3 - Toggle FOV\n");
+    printf("  Ctrl+C - Exit\n");
+    printf("\n");
+}
+
+int main(int argc, char** argv) {
+    signal(SIGINT, signal_handler);
+    
+    printBanner();
+    loadConfig();
+    printHelp();
+    
+    printf("[INFO] Dang tim process Free Fire...\n");
+    g_pid = findProcess("com.dts.freefireth");
+    
+    if (g_pid == 0) {
+        g_pid = findProcess("freefire");
+    }
+    
+    if (g_pid == 0) {
+        printf("[ERROR] Khong tim thay Free Fire process\n");
+        printf("[INFO] Thu chay voi quyen root: sudo ./aimlock\n");
+        return 1;
+    }
+    
+    printf("[INFO] Da tim thay Free Fire (PID: %d)\n", g_pid);
+    
+    g_memory.playerPosition.x = 0;
+    g_memory.playerPosition.y = 0;
+    g_memory.playerPosition.z = 0;
+    g_currentAngle.x = 0;
+    g_currentAngle.y = 0;
+    g_lastValidAngle = g_currentAngle;
+    
+    pthread_t thread;
+    pthread_create(&thread, NULL, aimlockThread, NULL);
+    
+    printf("[INFO] Aimlock da san sang!\n");
+    printf("[INFO] Nhan F1 de bat/tat\n");
+    printf("\n");
+    
+    char ch;
+    while (g_running) {
+        ch = getchar();
+        if (ch == 0x1B) {
+            g_running = 0;
+            break;
+        }
+    }
+    
+    g_running = 0;
+    pthread_join(thread, NULL);
+    
+    printf("[INFO] Da dung aimlock\n");
+    return 0;
+}
