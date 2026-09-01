@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<aimlock_config>
+    <general>
+        <enable>true</enable>
+        <mode>head</mode>
+        <fov>120</fov>
+        <smoothness>0.35</smoothness>
+        <smoothness_swipe>0.55</smoothness_swipe>
+        <max_distance>300</max_distance>
+        <min_distance>5</min_distance>
+        <prediction_time>0.08</prediction_time>
+        <auto_switch>true</auto_switch>
+        <switch_delay>0.3</switch_delay>
+        <keep_angle_no_target>true</keep_angle_no_target>
+        <no_target_wait>0.5</no_target_wait>
+    </general>
+    
+    <target>
+        <head>
+            <enable>true</enable>
+            <offset_x>0</offset_x>
+            <offset_y>0.15</offset_y>
+            <offset_z>0</offset_z>
+            <accuracy>1.0</accuracy>
+            <priority>1.0</priority>
+        </head>
+        <chest>
+            <enable>false</enable>
+            <offset_x>0</offset_x>
+            <offset_y>0</offset_y>
+            <offset_z>0</offset_z>
+            <accuracy>0.8</accuracy>
+            <priority>0.5</priority>
+        </chest>
+        <leg>
+            <enable>false</enable>
+            <offset_x>0</offset_x>
+            <offset_y>-0.5</offset_y>
+            <offset_z>0</offset_z>
+            <accuracy>0.6</accuracy>
+            <priority>0.3</priority>
+        </leg>
+    </target>
+    
+    <priority>
+        <type>distance</type>
+        <distance_weight>1.0</distance_weight>
+        <fov_weight>0.9</fov_weight>
+        <health_weight>0.5</health_weight>
+        <moving_weight>0.7</moving_weight>
+    </priority>
+    
+    <bullet>
+        <accuracy>1.0</accuracy>
+        <spread>0.0</spread>
+        <error>0.0</error>
+        <deviation>0.0</deviation>
+        <speed>1.5</speed>
+        <max_distance>500</max_distance>
+        <gravity_compensation>0.1</gravity_compensation>
+    </bullet>
+    
+    <memory>
+        <camera_angle>0x7F8A4C08</camera_angle>
+        <player_position>0x7F8A4C00</player_position>
+        <enemy_list>0x7F8A4D00</enemy_list>
+        <target_angle>0x7F8A4C10</target_angle>
+        <smoothness_addr>0x7F8A4C14</smoothness_addr>
+        <aimlock_status>0x7F8A4C18</aimlock_status>
+        <current_target>0x7F8A4C1C</current_target>
+        <current_fov>0x7F8A4C20</current_fov>
+        <head_offset>0x10</head_offset>
+        <player_list>0x7F8A4D10</player_list>
+        <health_addr>0x7F8A4D20</health_addr>
+    </memory>
+    
+    <hotkey>
+        <toggle_aimlock>F1</toggle_aimlock>
+        <switch_target>Tab</switch_target>
+        <switch_mode>F2</switch_mode>
+        <toggle_fov>F3</toggle_fov>
+        <toggle_bullet>F4</toggle_bullet>
+        <reload_config>F5</reload_config>
+    </hotkey>
+    
+    <optimize>
+        <reduce_graphics>true</reduce_graphics>
+        <increase_fps>true</increase_fps>
+        <reduce_shake>true</reduce_shake>
+        <smoothness_level>1.0</smoothness_level>
+        <reduce_lag>true</reduce_lag>
+        <gpu_rendering>true</gpu_rendering>
+        <hardware_acceleration>true</hardware_acceleration>
+    </optimize>
+    
+    <device>
+        <type>android</type>
+        <cpu_cores>8</cpu_cores>
+        <ram_size>4096</ram_size>
+        <gpu_type>adreno</gpu_type>
+        <refresh_rate>120</refresh_rate>
+        <resolution>1080x2400</resolution>
+    </device>
+    
+    <visual>
+        <show_fov>true</show_fov>
+        <show_target>true</show_target>
+        <show_crosshair>true</show_crosshair>
+        <crosshair_color>#00FF00</crosshair_color>
+        <fov_color>#FF0000</fov_color>
+        <target_color>#FFFF00</target_color>
+        <fov_alpha>0.3</fov_alpha>
+        <target_size>0.5</target_size>
+    </visual>
+    
+    <log>
+        <enable>true</enable>
+        <path>/sdcard/aimlock_log.txt</path>
+        <log_target>true</log_target>
+        <log_position>true</log_position>
+        <log_time>true</log_time>
+        <log_fps>true</log_fps>
+        <log_memory>true</log_memory>
+        <max_size>1048576</max_size>
+    </log>
+    
+    <warning>
+        <description>This configuration is for educational purposes only</description>
+        <risk>Account ban if used on official servers</risk>
+        <recommendation>Use only in training mode or private servers</recommendation>
+        <version>3.0.0</version>
+        <author>palofsc</author>
+    </warning>
+</aimlock_config>
