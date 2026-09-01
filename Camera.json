@@ -1,0 +1,132 @@
+{
+    "mod_name": "FPS Booster + Sensitivity Optimizer",
+    "version": "3.0.0",
+    "author": "palofsc",
+    "description": "Increase FPS and optimize screen sensitivity for Free Fire",
+    
+    "fps_booster": {
+        "enable": true,
+        "target_fps": 120,
+        "max_fps": 144,
+        "min_fps": 60,
+        "render_scale": 0.75,
+        "vsync": false,
+        "triple_buffering": true,
+        "gpu_rendering": true,
+        "hardware_acceleration": true,
+        "frame_drop_threshold": 0.5,
+        "cpu_affinity": "performance",
+        "gpu_optimization": "high_performance",
+        "thread_priority": "highest"
+    },
+    
+    "graphics_config": {
+        "texture_quality": 0.3,
+        "shadow_quality": 0,
+        "effect_quality": 0,
+        "particle_quality": 0,
+        "water_quality": 0,
+        "anti_aliasing": 0,
+        "resolution_scale": 0.5,
+        "view_distance": 0.5,
+        "bloom": false,
+        "motion_blur": false,
+        "depth_of_field": false,
+        "ambient_occlusion": false,
+        "post_processing": false,
+        "shader_quality": "low",
+        "texture_filtering": "bilinear"
+    },
+    
+    "sensitivity_config": {
+        "enable": true,
+        "general_sensitivity": 85,
+        "red_dot_sensitivity": 90,
+        "2x_scope_sensitivity": 80,
+        "4x_scope_sensitivity": 70,
+        "sniper_scope_sensitivity": 50,
+        "free_look_sensitivity": 75,
+        "gyroscope_sensitivity": 50,
+        "gyroscope_scope_sensitivity": 40,
+        "touch_response": 1.0,
+        "touch_delay": 0.0,
+        "swipe_speed": 1.2,
+        "acceleration": 1.0,
+        "dead_zone": 0.0
+    },
+    
+    "memory_optimization": {
+        "clear_cache": true,
+        "background_apps": false,
+        "memory_trim": true,
+        "gc_optimization": true,
+        "heap_size": 512,
+        "buffer_size": 256
+    },
+    
+    "network_config": {
+        "ping_optimization": true,
+        "packet_size": 1400,
+        "buffer_delay": 0.0,
+        "reconnect_timeout": 1.0
+    },
+    
+    "display_config": {
+        "brightness": 1.0,
+        "contrast": 1.2,
+        "color_saturation": 1.1,
+        "sharpness": 1.0,
+        "hdr_mode": false,
+        "night_mode": false,
+        "eye_protection": false
+    },
+    
+    "touch_config": {
+        "multi_touch": true,
+        "touch_sensitivity": 1.0,
+        "swipe_sensitivity": 1.2,
+        "pinch_sensitivity": 1.0,
+        "pointer_speed": 1.5,
+        "touch_acceleration": 1.0,
+        "edge_detection": false
+    },
+    
+    "memory_address": {
+        "fps_limit": "0x7F8A7000",
+        "render_scale": "0x7F8A7004",
+        "vsync_enable": "0x7F8A7008",
+        "gpu_mode": "0x7F8A700C",
+        "sensitivity_value": "0x7F8A7010",
+        "touch_response": "0x7F8A7014",
+        "frame_time": "0x7F8A7018"
+    },
+    
+    "hotkey_config": {
+        "toggle_fps_boost": "KEY_F5",
+        "toggle_sensitivity": "KEY_F6",
+        "reset_settings": "KEY_F7"
+    },
+    
+    "device_config": {
+        "device_type": "android",
+        "cpu_cores": 8,
+        "ram_size": 4096,
+        "gpu_type": "adreno",
+        "screen_refresh_rate": 120,
+        "screen_resolution": "1080x2400"
+    },
+    
+    "log_config": {
+        "enable_log": true,
+        "log_path": "/sdcard/fps_boost_log.txt",
+        "log_fps": true,
+        "log_memory": true,
+        "log_cpu": true
+    },
+    
+    "warning": {
+        "description": "This configuration is for performance testing purposes",
+        "risk": "May cause overheating on low-end devices",
+        "recommendation": "Monitor device temperature and battery usage"
+    }
+}
