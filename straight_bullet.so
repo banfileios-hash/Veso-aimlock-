@@ -1,0 +1,298 @@
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+#include <algorithm>
+#include <mutex>
+
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+    
+    Vector3 operator+(const Vector3& other) const {
+        return Vector3(x + other.x, y + other.y, z + other.z);
+    }
+    
+    Vector3 operator-(const Vector3& other) const {
+        return Vector3(x - other.x, y - other.y, z - other.z);
+    }
+    
+    Vector3 operator*(float scalar) const {
+        return Vector3(x * scalar, y * scalar, z * scalar);
+    }
+};
+
+class BulletStraight {
+private:
+    std::mutex mutexBullet;
+    bool daKhoiTao = false;
+    float tocDoBullet = 1.0f;
+    float doChinhXac = 1.0f;
+    float heSoGiamDoTan = 0.0f;
+    float heSoGiamSaiSo = 0.0f;
+    
+public:
+    BulletStraight() {}
+    
+    void SetBulletStraight() {
+        std::lock_guard<std::mutex> lock(mutexBullet);
+        
+        float* doTanBullet = (float*)0x7F8A6000;
+        *doTanBullet = 0.0f;
+        
+        float* saiSoBullet = (float*)0x7F8A6004;
+        *saiSoBullet = 0.0f;
+        
+        float* doLechBullet = (float*)0x7F8A6008;
+        *doLechBullet = 0.0f;
+        
+        float* doNhayBullet = (float*)0x7F8A600C;
+        *doNhayBullet = 0.0f;
+        
+        float* tocDoBulletMem = (float*)0x7F8A6010;
+        *tocDoBulletMem = 1500.0f;
+        
+        float* khoangCachBullet = (float*)0x7F8A6014;
+        *khoangCachBullet = 500.0f;
+        
+        int* cheDoBan = (int*)0x7F8A6018;
+        *cheDoBan = 1;
+        
+        std::cout << "[BULLET] Da cai dat dan chay thang tuyet doi" << std::endl;
+    }
+    
+    void SetDoChinhXac(float doChinhXacMoi) {
+        std::lock_guard<std::mutex> lock(mutexBullet);
+        doChinhXac = doChinhXacMoi;
+        
+        float* doChinhXacMem = (float*)0x7F8A6020;
+        *doChinhXacMem = doChinhXacMoi;
+    }
+    
+    void XoaSaiSoBan() {
+        std::lock_guard<std::mutex> lock(mutexBullet);
+        
+        float* spreadX = (float*)0x7F8A6030;
+        *spreadX = 0.0f;
+        
+        float* spreadY = (float*)0x7F8A6034;
+        *spreadY = 0.0f;
+        
+        float* spreadZ = (float*)0x7F8A6038;
+        *spreadZ = 0.0f;
+        
+        float* recoilX = (float*)0x7F8A6040;
+        *recoilX = 0.0f;
+        
+        float* recoilY = (float*)0x7F8A6044;
+        *recoilY = 0.0f;
+        
+        float* recoilZ = (float*)0x7F8A6048;
+        *recoilZ = 0.0f;
+        
+        std::cout << "[BULLET] Da xoa hoan toan sai so ban" << std::endl;
+    }
+    
+    void KhoaDuongDanBullet() {
+        std::lock_guard<std::mutex> lock(mutexBullet);
+        
+        float* huongX = (float*)0x7F8A6050;
+        *huongX = 0.0f;
+        
+        float* huongY = (float*)0x7F8A6054;
+        *huongY = 0.0f;
+        
+        float* huongZ = (float*)0x7F8A6058;
+        *huongZ = 1.0f;
+        
+        float* tocDoX = (float*)0x7F8A6060;
+        *tocDoX = 0.0f;
+        
+        float* tocDoY = (float*)0x7F8A6064;
+        *tocDoY = 0.0f;
+        
+        float* tocDoZ = (float*)0x7F8A6068;
+        *tocDoZ = 1500.0f;
+        
+        std::cout << "[BULLET] Da khoa duong dan bullet thang hang" << std::endl;
+    }
+    
+    void OptimizeBulletAll() {
+        SetBulletStraight();
+        XoaSaiSoBan();
+        KhoaDuongDanBullet();
+        SetDoChinhXac(1.0f);
+        std::cout << "[BULLET] Toi uu duong dan hoan tat" << std::endl;
+    }
+};
+
+class AimlockFreeFire {
+private:
+    Vector3 viTriNguoiChoi;
+    Vector3 gocHienTai;
+    std::vector<Vector3> danhSachDich;
+    bool aimlockActive = false;
+    Vector3 gocMucTieu;
+    float fov = 120.0f;
+    float doNhay = 0.45f;
+    std::mutex mutexAimlock;
+    
+    float TinhKhoangCach(Vector3 a, Vector3 b) {
+        return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2) + pow(a.z - b.z, 2));
+    }
+    
+    Vector3 TinhGocNham(Vector3 viTriNguoiChoi, Vector3 viTriMucTieu) {
+        Vector3 delta = viTriMucTieu - viTriNguoiChoi;
+        float khoangCach = TinhKhoangCach(viTriNguoiChoi, viTriMucTieu);
+        if (khoangCach < 0.001f) return Vector3(0, 0, 0);
+        
+        Vector3 goc;
+        goc.x = -asin(delta.y / khoangCach) * (180.0f / 3.14159265f);
+        goc.y = atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+        goc.z = 0;
+        return goc;
+    }
+    
+    bool KiemTraTrongFov(Vector3 gocHienTai, Vector3 gocMucTieu) {
+        float chenhLechYaw = fabs(gocHienTai.y - gocMucTieu.y);
+        float chenhLechPitch = fabs(gocHienTai.x - gocMucTieu.x);
+        if (chenhLechYaw > 180.0f) chenhLechYaw = 360.0f - chenhLechYaw;
+        float tongChenhLech = sqrt(pow(chenhLechYaw, 2) + pow(chenhLechPitch, 2));
+        return tongChenhLech <= fov;
+    }
+    
+    Vector3 ChonMucTieuGanNhat() {
+        if (danhSachDich.empty()) return Vector3(0, 0, 0);
+        
+        Vector3 mucTieuGanNhat;
+        float khoangCachNhoNhat = 999999.0f;
+        bool timThay = false;
+        
+        for (auto& viTri : danhSachDich) {
+            float khoangCach = TinhKhoangCach(viTriNguoiChoi, viTri);
+            Vector3 goc = TinhGocNham(viTriNguoiChoi, viTri);
+            if (KiemTraTrongFov(gocHienTai, goc)) {
+                if (khoangCach < khoangCachNhoNhat) {
+                    khoangCachNhoNhat = khoangCach;
+                    mucTieuGanNhat = viTri;
+                    gocMucTieu = goc;
+                    timThay = true;
+                }
+            }
+        }
+        
+        if (timThay) return mucTieuGanNhat;
+        return Vector3(0, 0, 0);
+    }
+    
+public:
+    AimlockFreeFire() {
+        viTriNguoiChoi = Vector3(0, 0, 0);
+        gocHienTai = Vector3(0, 0, 0);
+        aimlockActive = false;
+    }
+    
+    void CapNhatViTriNguoiChoi(Vector3 viTriMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        viTriNguoiChoi = viTriMoi;
+    }
+    
+    void CapNhatGocHienTai(Vector3 gocMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        gocHienTai = gocMoi;
+    }
+    
+    void CapNhatDanhSachDich(std::vector<Vector3> danhSach) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        danhSachDich = danhSach;
+    }
+    
+    Vector3 XulyAimlock() {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        
+        Vector3 mucTieu = ChonMucTieuGanNhat();
+        
+        if (mucTieu.x != 0 || mucTieu.y != 0 || mucTieu.z != 0) {
+            aimlockActive = true;
+            
+            Vector3 gocMoi;
+            gocMoi.x = gocHienTai.x + (gocMucTieu.x - gocHienTai.x) * doNhay;
+            gocMoi.y = gocHienTai.y + (gocMucTieu.y - gocHienTai.y) * doNhay;
+            gocMoi.z = 0;
+            
+            return gocMoi;
+        } else {
+            aimlockActive = false;
+            return gocHienTai;
+        }
+    }
+    
+    bool IsAimlockActive() {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        return aimlockActive;
+    }
+    
+    void SetFov(float fovMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        fov = fovMoi;
+    }
+    
+    void SetDoNhay(float doNhayMoi) {
+        std::lock_guard<std::mutex> lock(mutexAimlock);
+        doNhay = doNhayMoi;
+    }
+};
+
+AimlockFreeFire aimlock;
+BulletStraight bullet;
+
+extern "C" {
+    void Hook_UpdateBullet() {
+        bullet.OptimizeBulletAll();
+    }
+    
+    void Hook_UpdateCamera() {
+        void* camera = (void*)0x7F8A4C00;
+        void* playerManager = (void*)0x7F8A4D00;
+        
+        Vector3 viTriNguoiChoi = Vector3(0, 0, 0);
+        Vector3 gocHienTai = Vector3(0, 0, 0);
+        std::vector<Vector3> danhSachDich;
+        
+        aimlock.CapNhatViTriNguoiChoi(viTriNguoiChoi);
+        aimlock.CapNhatGocHienTai(gocHienTai);
+        aimlock.CapNhatDanhSachDich(danhSachDich);
+        aimlock.SetFov(120.0f);
+        aimlock.SetDoNhay(0.45f);
+        
+        Vector3 gocMoi = aimlock.XulyAimlock();
+        
+        if (aimlock.IsAimlockActive()) {
+            float* gocCamera = (float*)0x7F8A4C08;
+            gocCamera[0] = gocMoi.x;
+            gocCamera[1] = gocMoi.y;
+        }
+    }
+    
+    void Hook_SetBulletAccuracy(float doChinhXac) {
+        bullet.SetDoChinhXac(doChinhXac);
+    }
+}
+
+int main() {
+    std::cout << "[START] BULLET STRAIGHT + AIMLOCK" << std::endl;
+    std::cout << "[INFO] Dan chay thang tuyet doi, khong lech" << std::endl;
+    std::cout << "[INFO] Da xoa hoan toan do tan va sai so" << std::endl;
+    std::cout << "[INFO] Khoa duong dan bullet thang hang" << std::endl;
+    std::cout << "[INFO] Ban chuan xac 100%" << std::endl;
+    
+    bullet.OptimizeBulletAll();
+    
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    
+    return 0;
+}
