@@ -1,0 +1,544 @@
+#include <jni.h>
+#include <android/log.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <dlfcn.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <time.h>
+
+#define LOG_TAG "AimlockSO"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+#define PI 3.14159265358979323846
+#define MAX_ENEMIES 64
+#define TARGET_HEAD 0
+#define TARGET_CHEST 1
+#define TARGET_LEG 2
+#define TARGET_AUTO 3
+
+typedef struct {
+    float x, y, z;
+} Vector3;
+
+typedef struct {
+    Vector3 position;
+    Vector3 headPosition;
+    Vector3 chestPosition;
+    float distance;
+    float health;
+    int alive;
+    int id;
+} Enemy;
+
+typedef struct {
+    int enable;
+    float fov;
+    float smoothness;
+    float smoothnessSwipe;
+    float maxDistance;
+    float minDistance;
+    float predictionTime;
+    int aimMode;
+    int priorityType;
+    int autoSwitch;
+    float switchDelay;
+    float noTargetWait;
+    int keepAngleNoTarget;
+    int headshotOnly;
+} AimlockConfig;
+
+typedef struct {
+    long cameraAngle;
+    long playerPosition;
+    long enemyList;
+    long targetAngle;
+    long smoothnessAddr;
+    long aimlockStatus;
+    long currentTarget;
+    long currentFov;
+    long headOffset;
+    long playerList;
+    long healthAddr;
+    long libBase;
+    long cameraBase;
+    long playerManagerBase;
+} MemoryAddress;
+
+static AimlockConfig g_config;
+static MemoryAddress g_memory;
+static Enemy g_enemies[MAX_ENEMIES];
+static int g_enemyCount = 0;
+static int g_running = 1;
+static pthread_t g_aimlockThread;
+static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+static Vector3 g_currentAngle = {0, 0, 0};
+static Vector3 g_lastValidAngle = {0, 0, 0};
+static int g_isLocking = 0;
+static float g_noTargetTimer = 0;
+static int g_currentTargetId = -1;
+static int g_pid = 0;
+static int g_initialized = 0;
+
+float calculateDistance(Vector3 a, Vector3 b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    float dz = a.z - b.z;
+    return sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+Vector3 calculateAngle(Vector3 from, Vector3 to) {
+    Vector3 delta;
+    delta.x = to.x - from.x;
+    delta.y = to.y - from.y;
+    delta.z = to.z - from.z;
+    
+    float distance = calculateDistance(from, to);
+    if (distance < 0.001f) {
+        Vector3 zero = {0, 0, 0};
+        return zero;
+    }
+    
+    Vector3 angle;
+    angle.x = -asin(delta.y / distance) * 180.0f / PI;
+    angle.y = atan2(delta.x, delta.z) * 180.0f / PI;
+    angle.z = 0;
+    
+    return angle;
+}
+
+int isInFov(Vector3 currentAngle, Vector3 targetAngle, float fov) {
+    float diffYaw = fabs(currentAngle.y - targetAngle.y);
+    float diffPitch = fabs(currentAngle.x - targetAngle.x);
+    
+    if (diffYaw > 180.0f) diffYaw = 360.0f - diffYaw;
+    
+    float totalDiff = sqrt(diffYaw*diffYaw + diffPitch*diffPitch);
+    return totalDiff <= fov / 2.0f;
+}
+
+float calculatePriority(Enemy* enemy) {
+    float score = 0.0f;
+    
+    switch (g_config.priorityType) {
+        case 0:
+            score = 1000.0f / (enemy->distance + 1.0f);
+            break;
+        case 1: {
+            Vector3 angle = calculateAngle(g_memory.playerPosition, enemy->position);
+            float diff = fabs(g_currentAngle.y - angle.y);
+            if (diff > 180.0f) diff = 360.0f - diff;
+            score = 100.0f / (diff + 1.0f);
+            break;
+        }
+        case 2:
+            score = 100.0f - enemy->health;
+            break;
+        default:
+            score = 1000.0f / (enemy->distance + 1.0f);
+            break;
+    }
+    
+    return score;
+}
+
+Vector3 getTargetPosition(Enemy* enemy) {
+    Vector3 pos = {0, 0, 0};
+    
+    switch (g_config.aimMode) {
+        case TARGET_HEAD:
+            pos = enemy->headPosition;
+            pos.y += 0.15f;
+            break;
+        case TARGET_CHEST:
+            pos = enemy->chestPosition;
+            break;
+        case TARGET_LEG:
+            pos = enemy->position;
+            pos.y -= 0.5f;
+            break;
+        case TARGET_AUTO:
+        default:
+            if (enemy->distance < 30.0f) {
+                pos = enemy->headPosition;
+            } else {
+                pos = enemy->chestPosition;
+            }
+            break;
+    }
+    
+    return pos;
+}
+
+Enemy* selectBestTarget() {
+    if (g_enemyCount == 0) return NULL;
+    
+    Enemy* bestTarget = NULL;
+    float bestScore = -999999.0f;
+    
+    for (int i = 0; i < g_enemyCount; i++) {
+        if (!g_enemies[i].alive) continue;
+        
+        Vector3 angle = calculateAngle(g_memory.playerPosition, g_enemies[i].position);
+        if (!isInFov(g_currentAngle, angle, g_config.fov)) continue;
+        
+        float score = calculatePriority(&g_enemies[i]);
+        if (score > bestScore) {
+            bestScore = score;
+            bestTarget = &g_enemies[i];
+        }
+    }
+    
+    return bestTarget;
+}
+
+void applyAngle(Vector3 angle) {
+    g_currentAngle.x = angle.x;
+    g_currentAngle.y = angle.y;
+    g_currentAngle.z = 0;
+    
+    g_lastValidAngle = g_currentAngle;
+}
+
+int isSwipeDetected() {
+    static Vector3 lastAngle = {0, 0, 0};
+    float diffYaw = fabs(g_currentAngle.y - lastAngle.y);
+    float diffPitch = fabs(g_currentAngle.x - lastAngle.x);
+    
+    int result = (diffYaw > 15.0f || diffPitch > 10.0f);
+    lastAngle = g_currentAngle;
+    return result;
+}
+
+void processAimlock(Enemy* target) {
+    if (target == NULL) return;
+    
+    g_currentTargetId = target->id;
+    Vector3 targetPos = getTargetPosition(target);
+    Vector3 angle = calculateAngle(g_memory.playerPosition, targetPos);
+    
+    float currentSmoothness = g_config.smoothness;
+    
+    if (isSwipeDetected()) {
+        currentSmoothness = g_config.smoothnessSwipe;
+    }
+    
+    if (target->distance < 30.0f) {
+        currentSmoothness += 0.1f;
+    } else if (target->distance > 150.0f) {
+        currentSmoothness -= 0.05f;
+    }
+    
+    if (currentSmoothness < 0.05f) currentSmoothness = 0.05f;
+    if (currentSmoothness > 0.95f) currentSmoothness = 0.95f;
+    
+    Vector3 newAngle;
+    newAngle.x = g_currentAngle.x + (angle.x - g_currentAngle.x) * currentSmoothness;
+    newAngle.y = g_currentAngle.y + (angle.y - g_currentAngle.y) * currentSmoothness;
+    newAngle.z = 0;
+    
+    applyAngle(newAngle);
+    g_isLocking = 1;
+    g_noTargetTimer = 0;
+}
+
+void handleNoTarget() {
+    if (g_config.keepAngleNoTarget) {
+        g_noTargetTimer += 0.016f;
+        if (g_noTargetTimer < g_config.noTargetWait) {
+            applyAngle(g_lastValidAngle);
+        }
+    }
+    
+    g_isLocking = 0;
+    g_currentTargetId = -1;
+}
+
+int writeMemory(long address, void* buffer, size_t size) {
+    char memPath[256];
+    snprintf(memPath, sizeof(memPath), "/proc/%d/mem", g_pid);
+    
+    int fd = open(memPath, O_RDWR);
+    if (fd < 0) {
+        LOGE("Cannot open mem: %s", memPath);
+        return -1;
+    }
+    
+    lseek(fd, address, SEEK_SET);
+    ssize_t bytes = write(fd, buffer, size);
+    close(fd);
+    
+    return bytes == (ssize_t)size ? 0 : -1;
+}
+
+void updateEnemyList() {
+    pthread_mutex_lock(&g_mutex);
+    
+    g_enemyCount = 0;
+    
+    long enemyAddr = g_memory.enemyList;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        long currentAddr = enemyAddr + (i * 0x100);
+        
+        Enemy enemy;
+        int health = 0;
+        float posX, posY, posZ;
+        
+        if (writeMemory(currentAddr + 0x00, &posX, sizeof(float)) == 0) {
+            enemy.position.x = posX;
+            enemy.position.y = posY;
+            enemy.position.z = posZ;
+            enemy.headPosition.x = posX;
+            enemy.headPosition.y = posY + 1.7f;
+            enemy.headPosition.z = posZ;
+            enemy.chestPosition.x = posX;
+            enemy.chestPosition.y = posY + 1.2f;
+            enemy.chestPosition.z = posZ;
+            enemy.distance = calculateDistance(g_memory.playerPosition, enemy.position);
+            enemy.health = 100.0f;
+            enemy.alive = 1;
+            enemy.id = i;
+            
+            g_enemies[g_enemyCount++] = enemy;
+            if (g_enemyCount >= MAX_ENEMIES) break;
+        }
+    }
+    
+    pthread_mutex_unlock(&g_mutex);
+}
+
+void* aimlockLoop(void* arg) {
+    LOGI("Aimlock thread started");
+    
+    while (g_running) {
+        updateEnemyList();
+        
+        if (g_enemyCount > 0) {
+            Enemy* target = selectBestTarget();
+            if (target != NULL) {
+                processAimlock(target);
+                
+                float angleData[2] = {g_currentAngle.x, g_currentAngle.y};
+                writeMemory(g_memory.cameraAngle, angleData, sizeof(angleData));
+                
+                int status = 1;
+                writeMemory(g_memory.aimlockStatus, &status, sizeof(int));
+            } else {
+                handleNoTarget();
+            }
+        } else {
+            handleNoTarget();
+        }
+        
+        usleep(10000);
+    }
+    
+    LOGI("Aimlock thread stopped");
+    return NULL;
+}
+
+long getModuleBase(const char* moduleName) {
+    char line[512];
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/%d/maps", g_pid);
+    
+    FILE* fp = fopen(path, "r");
+    if (fp == NULL) return 0;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, moduleName)) {
+            char* dash = strchr(line, '-');
+            if (dash) {
+                *dash = '\0';
+                long base = strtol(line, NULL, 16);
+                fclose(fp);
+                return base;
+            }
+        }
+    }
+    
+    fclose(fp);
+    return 0;
+}
+
+void setupMemoryAddress() {
+    g_memory.libBase = getModuleBase("libil2cpp.so");
+    if (g_memory.libBase == 0) {
+        g_memory.libBase = getModuleBase("libunity.so");
+    }
+    
+    if (g_memory.libBase != 0) {
+        g_memory.cameraAngle = g_memory.libBase + 0x1A4C08;
+        g_memory.playerPosition = g_memory.libBase + 0x1A4C00;
+        g_memory.enemyList = g_memory.libBase + 0x1A4D00;
+        g_memory.targetAngle = g_memory.libBase + 0x1A4C10;
+        g_memory.smoothnessAddr = g_memory.libBase + 0x1A4C14;
+        g_memory.aimlockStatus = g_memory.libBase + 0x1A4C18;
+        g_memory.currentTarget = g_memory.libBase + 0x1A4C1C;
+        g_memory.currentFov = g_memory.libBase + 0x1A4C20;
+        g_memory.headOffset = 0x10;
+        g_memory.playerList = g_memory.libBase + 0x1A4D10;
+        g_memory.healthAddr = g_memory.libBase + 0x1A4D20;
+        
+        LOGI("Library base: 0x%lx", g_memory.libBase);
+        LOGI("Camera angle: 0x%lx", g_memory.cameraAngle);
+        LOGI("Enemy list: 0x%lx", g_memory.enemyList);
+    } else {
+        LOGE("Cannot find libil2cpp.so or libunity.so");
+    }
+}
+
+void loadDefaultConfig() {
+    g_config.enable = 1;
+    g_config.fov = 120.0f;
+    g_config.smoothness = 0.35f;
+    g_config.smoothnessSwipe = 0.55f;
+    g_config.maxDistance = 300.0f;
+    g_config.minDistance = 5.0f;
+    g_config.predictionTime = 0.08f;
+    g_config.aimMode = TARGET_HEAD;
+    g_config.priorityType = 0;
+    g_config.autoSwitch = 1;
+    g_config.switchDelay = 0.3f;
+    g_config.noTargetWait = 0.5f;
+    g_config.keepAngleNoTarget = 1;
+    g_config.headshotOnly = 1;
+}
+
+int findProcessPid() {
+    DIR* dir = opendir("/proc");
+    if (dir == NULL) return 0;
+    
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type != DT_DIR) continue;
+        
+        int pid = atoi(entry->d_name);
+        if (pid <= 0) continue;
+        
+        char cmdPath[256];
+        snprintf(cmdPath, sizeof(cmdPath), "/proc/%d/cmdline", pid);
+        
+        FILE* fp = fopen(cmdPath, "r");
+        if (fp == NULL) continue;
+        
+        char cmdline[256];
+        if (fgets(cmdline, sizeof(cmdline), fp) != NULL) {
+            if (strstr(cmdline, "com.dts.freefireth") != NULL) {
+                fclose(fp);
+                closedir(dir);
+                return pid;
+            }
+        }
+        fclose(fp);
+    }
+    
+    closedir(dir);
+    return 0;
+}
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    LOGI("Aimlock SO loaded");
+    return JNI_VERSION_1_6;
+}
+
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
+    LOGI("Aimlock SO unloading");
+    g_running = 0;
+    if (g_aimlockThread) {
+        pthread_join(g_aimlockThread, NULL);
+    }
+}
+
+JNIEXPORT jint JNICALL Java_com_aimlock_Aimlock_start(JNIEnv* env, jobject thiz) {
+    if (g_initialized) {
+        LOGI("Aimlock already started");
+        return 1;
+    }
+    
+    LOGI("Starting Aimlock...");
+    
+    g_pid = findProcessPid();
+    if (g_pid == 0) {
+        LOGE("Cannot find Free Fire process");
+        return 0;
+    }
+    
+    LOGI("Found Free Fire PID: %d", g_pid);
+    
+    loadDefaultConfig();
+    setupMemoryAddress();
+    
+    if (g_memory.libBase == 0) {
+        LOGE("Cannot find game library");
+        return 0;
+    }
+    
+    g_running = 1;
+    pthread_create(&g_aimlockThread, NULL, aimlockLoop, NULL);
+    g_initialized = 1;
+    
+    LOGI("Aimlock started successfully");
+    return 1;
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_stop(JNIEnv* env, jobject thiz) {
+    LOGI("Stopping Aimlock...");
+    g_running = 0;
+    if (g_aimlockThread) {
+        pthread_join(g_aimlockThread, NULL);
+    }
+    g_initialized = 0;
+    LOGI("Aimlock stopped");
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aimlock_Aimlock_isRunning(JNIEnv* env, jobject thiz) {
+    return g_running && g_initialized;
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_setFov(JNIEnv* env, jobject thiz, jfloat fov) {
+    g_config.fov = fov;
+    LOGI("FOV set to: %f", fov);
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_setSmoothness(JNIEnv* env, jobject thiz, jfloat smooth) {
+    g_config.smoothness = smooth;
+    LOGI("Smoothness set to: %f", smooth);
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_setAimMode(JNIEnv* env, jobject thiz, jint mode) {
+    g_config.aimMode = mode;
+    LOGI("Aim mode set to: %d", mode);
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_toggle(JNIEnv* env, jobject thiz) {
+    g_config.enable = !g_config.enable;
+    LOGI("Aimlock toggled: %d", g_config.enable);
+}
+
+JNIEXPORT jint JNICALL Java_com_aimlock_Aimlock_getCurrentTarget(JNIEnv* env, jobject thiz) {
+    return g_currentTargetId;
+}
+
+JNIEXPORT jfloat JNICALL Java_com_aimlock_Aimlock_getCurrentAngleX(JNIEnv* env, jobject thiz) {
+    return g_currentAngle.x;
+}
+
+JNIEXPORT jfloat JNICALL Java_com_aimlock_Aimlock_getCurrentAngleY(JNIEnv* env, jobject thiz) {
+    return g_currentAngle.y;
+}
+
+JNIEXPORT void JNICALL Java_com_aimlock_Aimlock_setHeadshotOnly(JNIEnv* env, jobject thiz, jboolean enable) {
+    g_config.headshotOnly = enable;
+    if (enable) {
+        g_config.aimMode = TARGET_HEAD;
+    }
+    LOGI("Headshot only: %d", enable);
+}
